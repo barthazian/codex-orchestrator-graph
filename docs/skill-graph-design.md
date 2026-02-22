@@ -1,12 +1,12 @@
-# Skill Graph Implementation Plan
+# Skill Graph Architecture
 
-_Captured: 2026-02-21_
+_Initial design captured 2026-02-21. Updated to reflect completed implementation._
 
-## Problem
+## Problem This Solved
 
-The current `codex-orchestrator` SKILL.md is 1,010 lines — both the graph (routing logic) AND all node implementations (how to do research, implement, review, test). Claude loads the full 1,010 lines on every invocation, consuming ~15-20k tokens before any work begins.
+The original `codex-orchestrator` SKILL.md was ~1,010 lines — both the graph routing logic AND all stage node implementations in a single file. Claude loaded the full 1,010 lines on every invocation (~15-20k tokens before any work began).
 
-Stage 6 is duplicated: the SKILL.md describes the full review protocol inline AND `codex-reviewer.md` implements the same protocol as a standalone agent. They are out of sync whenever either is updated.
+Stage 6 was duplicated: the SKILL.md described the full review protocol inline AND `codex-reviewer.md` implemented the same protocol as a standalone agent. They drifted out of sync whenever either was updated.
 
 ---
 
@@ -18,14 +18,16 @@ USER
   v
 codex-orchestrator  ← graph traversal, state machine, coordination only
   |
-  |--[Stage 2]--> codex-research   skill  (new)
-  |--[Stage 4]--> codex-prd        skill  (new, lightweight)
-  |--[Stage 5]--> codex-implement  skill  (new)
-  |--[Stage 6]--> codex-reviewer   agent  (already exists — just invoke it)
-  |--[Stage 7]--> codex-test       skill  (new)
+  |--[Stage 2]--> codex-research   skill
+  |--[Stage 4]--> codex-prd        skill
+  |--[Stage 5]--> codex-implement  skill
+  |--[Stage 6]--> codex-reviewer   agent
+  |--[Stage 7]--> codex-test       skill
 ```
 
 Edges are conditional transitions read from `_codex/state.db`. Orchestrator reads `mission.stage`, invokes the right skill via the `Skill` tool, waits for return, reads outcome, decides next edge.
+
+No direct skill-to-skill calls. Everything routes through the orchestrator.
 
 ---
 
@@ -34,128 +36,134 @@ Edges are conditional transitions read from `_codex/state.db`. Orchestrator read
 | Node | Owns | Does NOT own |
 |------|------|-------------|
 | `codex-orchestrator` | Graph topology, stage transitions, state.db protocol, prereq gates, mission init, user interaction | Stage-specific spawn templates, timing, review protocol |
-| `codex-research` | Stage 2 spawn template, research synthesis pattern | Anything outside Stage 2 |
-| `codex-prd` | PRD format, user approval loop | Agent spawning |
-| `codex-implement` | Stage 5 spawn template, file locks, artifact gate, background watcher, build verification, timing | Review logic |
-| `codex-reviewer` | Full dual-model review (already complete — DO NOT duplicate) | Everything else |
-| `codex-test` | Stage 7 spawn template, coverage verification | Implementation |
+| `codex-research` | Stage 2 spawn template, research synthesis pattern (claude/codex/hybrid modes) | Anything outside Stage 2 |
+| `codex-prd` | PRD format, user approval loop, auto-approve flag | Agent spawning |
+| `codex-implement` | Stage 5 spawn template, file locks, artifact gate, background watcher, build verification, timing, spec file protocol | Review logic |
+| `codex-reviewer` | Full dual-model review: Codex CLI + 5 Claude agents → KEEP/DISCARD/ELEVATE → synthesis.md | Everything else |
+| `codex-test` | Stage 7 spawn template, spec-first mode, language-aware preflight, coverage verification | Implementation |
 
 ---
 
-## Transition Conditions (Edge Logic)
+## Transition Conditions
 
 ```
 ideation   → research    when: user confirms scope
-research   → synthesis   when: all research agents in state.db = completed
+research   → synthesis   when: all research agents in state.db = completed/failed
 synthesis  → prd         when: Claude writes synthesis to events table
-prd        → implement   when: user explicitly approves PRD
+prd        → implement   when: user explicitly approves PRD (or CODEX_AUTO_APPROVE=1)
 implement  → review      when: artifact gate passes (no running agents, no locks, build clean)
 review     → implement   when: ELEVATE/CRITICAL findings exist (loop back for fixes)
 review     → test        when: no ELEVATE/CRITICAL findings
-test       → done        when: all tests pass
+test       → done        when: all tests pass + coverage >= 80%
 ```
 
 ---
 
 ## How Skills Are Invoked
 
-Orchestrator uses the `Skill` tool at each stage transition:
-
 ```
-Skill("codex-research")   → stage skill runs → updates state.db → returns
-Skill("codex-implement")  → stage skill runs → updates state.db → returns
-Skill("codex-reviewer")   → agent runs       → synthesis.md written → returns
-Skill("codex-test")       → stage skill runs → updates state.db → returns
+Skill("codex-research-g")  → stage skill runs → findings written → returns
+Skill("codex-prd-g")       → stage skill runs → PRD approved → returns
+Skill("codex-implement-g") → stage skill runs → build gate passes → returns
+Skill("codex-reviewer")    → agent runs → synthesis.md written → returns
+Skill("codex-test-g")      → stage skill runs → tests pass → returns
 ```
-
-No direct skill-to-skill calls. Everything routes through the orchestrator.
 
 ---
 
-## File Structure (Target State)
+## Actual File Sizes (Post-Implementation)
 
-```
-~/.claude/plugins/marketplaces/codex-orchestrator-marketplace/
-└── plugins/codex-orchestrator/
-    ├── skills/
-    │   ├── codex-orchestrator/SKILL.md   (~300 lines — graph only)
-    │   ├── codex-research/SKILL.md       (~150 lines — new)
-    │   ├── codex-implement/SKILL.md      (~350 lines — new)
-    │   ├── codex-prd/SKILL.md            (~100 lines — new)
-    │   └── codex-test/SKILL.md           (~100 lines — new)
-    └── commands/
-        └── codex-orchestrator.md         (unchanged stub)
+| Skill | Lines | Notes |
+|-------|-------|-------|
+| `codex-orchestrator` | ~500 | Graph routing + SQLite schema + monitoring |
+| `codex-implement` | ~400 | Full spawn template, all gates, operational policies |
+| `codex-research` | ~200 | claude/codex/hybrid modes + spawn template |
+| `codex-prd` | ~100 | PRD format + approval loop |
+| `codex-test` | ~280 | Spec-first mode + language preflight + spawn template |
+| `codex-reviewer` | ~110 | Dual-model review protocol (agent, not skill) |
 
-~/.claude/agents/
-└── codex-reviewer.md                     (already exists — unchanged)
-```
+**Context loaded per turn:**
+- Before: 1,010 lines always
+- After: ~500 (orchestrator) + ~100–400 (active stage skill)
+- Reduction: ~35–60% per turn
+
+---
+
+## Hardening Changes (Post-Initial Design)
+
+These were not in the original design and were added after operational experience.
+
+### 1. Three-Status Agent Progression
+
+Original design had two statuses: `running` (on register) and `completed`/`failed`. This created phantom agents when context compaction happened between registration and the `codex-agent start` command — the DB showed `running` but no process existed.
+
+**Solution:** Three statuses enforced across all spawning skills:
+- `pending` = registered, spawn command not yet issued (safe to re-spawn)
+- `spawned` = command issued, process handed to OS (check `codex-agent jobs --json`)
+- `running` = agent self-reported start (legacy; agents may skip this)
+
+SQL schema updated: `CHECK (status IN ('pending', 'spawned', 'running', 'completed', 'failed'))`
+
+### 2. Two-Checkpoint Blackboard Protocol
+
+Original design had a single post-gate checkpoint. If compaction happened mid-stage (between spawning agents and the artifact gate), recovery was ambiguous — the checkpoint showed the previous stage's state.
+
+**Solution:** Two checkpoints per stage gate:
+- **Checkpoint A (pre-execution):** Written before registering any agent. Content: `stage`, `planned_agents` (names + file lists). Recovery anchor — if compaction mid-stage, this checkpoint shows what was planned vs what `state.db` shows was completed.
+- **Checkpoint B (post-gate):** Written after `mission.stage` updates. Full completed picture.
+
+Supersede chain in memoryd ensures only the current checkpoint is returned on `memory_bootstrap`.
+
+### 3. Spec Files for Complex Tasks (Option B)
+
+Original design embedded all task detail inline in the prompt body. For cross-cutting tasks (touching multiple modules), implementation detail exceeded the Windows env-block limit (~32KB total, ~4KB safe per prompt).
+
+**Solution:** For tasks with >5 bullet points, Claude writes `_codex/specs/{agentId}.md` before spawning. Prompt body contains one imperative sentence + `IMPLEMENTATION SPEC: Read _codex/specs/{agentId}.md`.
+
+**Hard 3KB size check** runs before every `codex-agent start` — fails with exit code 1 if over limit. Added to `codex-implement` and `codex-test`.
+
+### 4. No `-f` Flag
+
+Codex CLI `-f file.txt` appends full file content to `CODEX_PROMPT` env var, exhausting the Windows ~32KB process environment limit. Agents read files themselves during their turns. The `-f` flag reference was removed from all spawn commands and the CRITICAL guidance note.
 
 ---
 
 ## What Stays in `codex-orchestrator` SKILL.md
 
-| Section | Action |
+| Section | Status |
 |---------|--------|
-| Command structure (Section 1) | Keep |
-| Critical rules (Section 2) | Keep, condense |
-| Prerequisites — git, health checks (Section 3) | Keep |
-| Pipeline overview + stage detection table (Section 4) | Keep table only — strip stage internals |
-| SQLite schema + write ownership table (Section 5) | Keep — shared by all skills |
-| Spawning template (Section 6) | **Move to `codex-implement`** |
-| CLI reference — monitoring commands (Section 7) | Keep |
-| CLI reference — spawn flags | Move to stage skills |
-| Operational policies — shared (sandbox, timeout, retry, model selection) (Section 8) | Keep |
-| Error recovery — shared (Section 9) | Keep |
-| Agent timing expectations (Section 10) | **Move to `codex-implement`** |
-| When not to use (Section 11) | Keep |
+| Command structure | Kept |
+| Critical rules (5 rules) | Kept |
+| Prerequisites — git check, install script reference | Kept |
+| Pipeline overview + stage detection table | Kept (stage internals stripped) |
+| SQLite schema + write ownership table | Kept — shared by all skills |
+| CLI reference — monitoring commands | Kept |
+| Operational policies — shared (sandbox, model selection) | Kept |
+| Error recovery — post-compaction recovery | Kept |
+| Blackboard checkpoint protocol | Kept — two-checkpoint design |
+| Spawning template | Moved to `codex-implement` |
+| Agent timing expectations | Moved to `codex-implement` |
+| Stage 6 inline review protocol | Replaced with one-paragraph `Skill("codex-reviewer")` invocation |
 
 ---
 
-## Stage 6 Fix (Deduplication)
+## Stage 6 Deduplication
 
-The SKILL.md Stage 6 currently describes the full review protocol inline (~130 lines), which is identical to `codex-reviewer.md`. After decomposition:
+The original SKILL.md described the full review protocol inline (~130 lines), identical to `codex-reviewer.md`. After decomposition, Stage 6 in the orchestrator SKILL.md is:
 
-**SKILL.md Stage 6 becomes:**
 ```
 ### Stage 6: Review
 
-Invoke the `codex-reviewer` agent. It runs the full dual-model review protocol
-(deterministic gate → codex review → 5 Claude agents → orchestrating Claude judgment → synthesis).
+Skill("codex-reviewer")
 
-After it returns, check synthesis.md for ELEVATE/CRITICAL findings:
-- If any exist: loop back to Stage 5 (spawn fix agents)
+The `codex-reviewer` agent runs the full dual-model review protocol
+(deterministic gate → codex review → 5 Claude agents → orchestrating Claude
+judgment → synthesis). It is the authoritative source for Stage 6 — do not
+re-implement its protocol here.
+
+After it returns, check _codex/reviews/synthesis.md for ELEVATE/CRITICAL findings:
+- If any exist: loop back to Stage 5 (spawn fix agents via codex-implement)
 - If none: advance to Stage 7
 ```
 
-Full protocol lives ONLY in `codex-reviewer.md`. No duplication.
-
----
-
-## Size Projection
-
-| State | Lines loaded per turn |
-|-------|-----------------------|
-| Now (monolith) | 1,010 always |
-| After decomposition | ~300 (orchestrator) + ~100–350 (active stage skill) |
-| **Reduction** | **35–60% per turn** |
-
----
-
-## Build Order
-
-1. **Extract `codex-implement`** — biggest payoff, most content to move (spawn template, file locks, watcher, build gate, timing)
-2. **Extract `codex-research`** — second biggest, mostly spawn template + synthesis pattern
-3. **Slim `codex-orchestrator` SKILL.md** — remove moved sections, replace Stage 6 with codex-reviewer invocation
-4. **Create `codex-test`** — small, mostly new content
-5. **Create `codex-prd`** — smallest, mostly format + approval loop
-6. **Verify `codex-reviewer` agent** — confirm it needs no changes
-
----
-
-## Key Decisions
-
-- Skills share state via `state.db` only — no direct skill-to-skill data passing
-- Each stage skill is independently invocable (can run Stage 5 directly without full orchestration)
-- `codex-reviewer` agent is the authoritative source for Stage 6 — SKILL.md never duplicates it again
-- Background watcher (Rule 11) moves to `codex-implement` — it's implementation-stage specific
-- Per-stage model/reasoning config (`CODEX_MODEL`, `CODEX_REVIEW_MODEL`, etc.) stays in each stage skill
+Full protocol lives only in `codex-reviewer.md`. No duplication.
