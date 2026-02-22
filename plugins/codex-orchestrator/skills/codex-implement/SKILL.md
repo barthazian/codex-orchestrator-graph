@@ -57,8 +57,6 @@ npm run build        # Node   (package.json with build script)
 
 If build verification fails, Claude fixes the issue directly (dependency source, version conflict, syntax error) before advancing to Stage 6. Do NOT spawn a new agent to fix a dependency line.
 
-**Map Update Gate (after build verification passes):** Run `/cartographer` to update the codebase map before review. Implementation agents changed the codebase — review agents need current architecture context.
-
 ---
 
 ## Spawning Agents — Mandatory Prompt Template
@@ -74,7 +72,7 @@ Every agent prompt MUST include the **Mission Context** and **Task** blocks belo
 
 ### The Template
 
-**CRITICAL: Use file-based prompts to avoid shell quoting issues.** Write the prompt to `_codex/prompt-{agentId}.txt` using the Write tool, then spawn with `codex-agent start "$(cat _codex/prompt-{agentId}.txt)" --map -f "relevant/files"`.
+**CRITICAL: Use file-based prompts to avoid shell quoting issues.** Write the prompt to `_codex/prompt-{agentId}.txt` using the Write tool, then spawn with `codex-agent start "$(cat _codex/prompt-{agentId}.txt)"`.
 
 **Prompt files stay well under 1KB with the context file approach.** The context (mission state, agents, events) lives in `_codex/mission-context.md`. The prompt contains only: context file reference + task + file list + WHEN DONE. This permanently solves the Windows ~32KB env block limit that caused `Argument list too long` when context was embedded inline.
 

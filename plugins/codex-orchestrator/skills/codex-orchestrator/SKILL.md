@@ -164,14 +164,9 @@ At each stage gate, Claude invokes the relevant skill via the `Skill` tool, wait
 ```bash
 # Gate 1: Git repo (HARD REQUIREMENT — agents silently fail without this)
 test -d .git && echo "GIT OK" || (git init && echo "GIT INITIALIZED")
-
-# Gate 2: Codebase map
-test -f docs/CODEBASE_MAP.md && echo "MAP EXISTS" || echo "NO MAP — run /cartographer first"
 ```
 
 Do NOT spawn any agent until Gate 1 passes.
-
-**Auto-update after implementation:** After Stage 5 completes and passes the artifact gate, run `/cartographer` in update mode before advancing to Stage 6.
 
 ### Stage 1: Ideation (Claude + User)
 
@@ -457,7 +452,6 @@ codex-agent health               # verify codex available
 | `--reasoning` | `-r` | low, medium, high, xhigh | Reasoning depth |
 | `--sandbox` | `-s` | read-only, workspace-write, danger-full-access | File access level |
 | `--file` | `-f` | glob | Include files (repeatable) |
-| `--map` | | flag | Include docs/CODEBASE_MAP.md |
 | `--dir` | `-d` | path | Working directory |
 | `--model` | `-m` | string | Model override |
 | `--json` | | flag | JSON output (jobs only) |
