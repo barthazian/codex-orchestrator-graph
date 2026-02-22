@@ -61,7 +61,7 @@ Claude breaks work into focused, independent tasks and spawns a Codex agent for 
 - Doing extensive file reads for delegation context
 
 **Agent's job:**
-- Read the pre-injected mission context (provided as plain text in the prompt — no DB queries needed)
+- Read `_codex/mission-context.md` as first action to get mission context — no DB queries needed. Context is written by Claude before each spawn.
 - Execute the focused task from Claude
 - Write clean code following existing patterns
 - Stay within scope — only modify files listed in YOUR FILES (pre-locked by Claude)
@@ -130,17 +130,17 @@ USER'S REQUEST
      v
 1. IDEATION        (Claude + User)
      |
-2. RESEARCH        (→ Skill: codex-research)
+2. RESEARCH        (→ Skill: codex-research-g)
      |
 3. SYNTHESIS       (Claude)
      |
-4. PRD             (→ Skill: codex-prd)
+4. PRD             (→ Skill: codex-prd-g)
      |
-5. IMPLEMENTATION  (→ Skill: codex-implement)
+5. IMPLEMENTATION  (→ Skill: codex-implement-g)
      |
 6. REVIEW          (→ Agent: codex-reviewer)
      |
-7. TESTING         (→ Skill: codex-test)
+7. TESTING         (→ Skill: codex-test-g)
 ```
 
 At each stage gate, Claude invokes the relevant skill via the `Skill` tool, waits for it to return, then reads the outcome from `state.db` to decide the next transition.
@@ -150,12 +150,12 @@ At each stage gate, Claude invokes the relevant skill via the `Skill` tool, wait
 | Signal | Stage | Action |
 |--------|-------|--------|
 | New feature request, vague problem | IDEATION | Discuss with user, clarify scope |
-| "investigate", "research", "understand" | RESEARCH | `Skill("codex-research")` |
+| "investigate", "research", "understand" | RESEARCH | `Skill("codex-research-g")` |
 | Agent findings ready, need synthesis | SYNTHESIS | Claude reviews, filters, combines |
-| "let's plan", "create PRD", synthesis done | PRD | `Skill("codex-prd")` |
-| PRD exists, "implement", "build" | IMPLEMENTATION | `Skill("codex-implement")` |
+| "let's plan", "create PRD", synthesis done | PRD | `Skill("codex-prd-g")` |
+| PRD exists, "implement", "build" | IMPLEMENTATION | `Skill("codex-implement-g")` |
 | Implementation done, "review" | REVIEW | `Skill("codex-reviewer")` |
-| "test", "verify", review passed | TESTING | `Skill("codex-test")` |
+| "test", "verify", review passed | TESTING | `Skill("codex-test-g")` |
 
 ### Codebase Map (Auto-Managed)
 
@@ -180,7 +180,7 @@ Talk through the problem with the user. Understand what they want. Plan how to d
 ### Stage 2: Research
 
 ```
-Skill("codex-research")
+Skill("codex-research-g")
 ```
 
 The `codex-research` skill owns Stage 2 spawn templates, research synthesis pattern, and agent decomposition for research questions. Returns when all research agents complete.
@@ -192,7 +192,7 @@ Review agent outputs via `codex-agent jobs --json` and `codex-agent events <id>`
 ### Stage 4: PRD
 
 ```
-Skill("codex-prd")
+Skill("codex-prd-g")
 ```
 
 The `codex-prd` skill owns PRD format, user approval loop, and file writing to `docs/prds/`. Returns after user explicitly approves the PRD.
@@ -200,7 +200,7 @@ The `codex-prd` skill owns PRD format, user approval loop, and file writing to `
 ### Stage 5: Implementation
 
 ```
-Skill("codex-implement")
+Skill("codex-implement-g")
 ```
 
 The `codex-implement` skill owns the full spawn template, file pre-locking, artifact gate, host build verification, and map update gate. Returns when all gates pass.
@@ -220,7 +220,7 @@ After it returns, check `_codex/reviews/synthesis.md` for ELEVATE/CRITICAL findi
 ### Stage 7: Testing
 
 ```
-Skill("codex-test")
+Skill("codex-test-g")
 ```
 
 The `codex-test` skill owns test agent spawn templates, test execution, and coverage verification. Returns when all tests pass.
@@ -236,6 +236,10 @@ _codex/
 ├── state.db                # SQLite database (WAL mode)
 ├── state.db-wal            # WAL file (auto-created)
 ├── state.db-shm            # Shared memory file (auto-created)
+├── mission-context.md      # Written before each spawn; agents read this (never embedded in prompt)
+├── prompt-{agentId}.txt    # Tiny: task + file list + WHEN DONE only (~800 bytes)
+├── specs/
+│   └── {agentId}.md        # Per-agent implementation spec (complex tasks only; agent reads from filesystem)
 └── reviews/
     ├── codex-{focus}.md    # Codex review agent findings
     └── synthesis.md        # Claude writes final synthesis
@@ -264,7 +268,7 @@ CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   task TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    CHECK (status IN ('pending', 'spawned', 'running', 'completed', 'failed')),
   sandbox TEXT DEFAULT 'workspace-write',
   started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
   completed_at TEXT,
@@ -328,7 +332,19 @@ CREATE INDEX IF NOT EXISTS idx_findings_path ON review_findings(path);
 
 At every stage gate, Claude writes a checkpoint to memoryd. This survives `/compact` and `/clear` — `memory_bootstrap` restores stage context instantly at session start without requiring filesystem reads.
 
-**When to write:** after mission init (ideation), synthesis→PRD, PRD approval→implement, artifact gate→review, review→test, test→done. Write immediately after the corresponding `UPDATE mission SET stage=...`.
+**When to write — two checkpoints per stage:**
+
+- **Checkpoint A (pre-execution):** Write BEFORE registering any agent for a stage. This is the recovery anchor for mid-stage compaction. Content: `stage`, `mission_description`, `planned_agents` (task names + file lists before any spawn), `key_decisions`. Write this before the first `INSERT INTO agents` for the wave.
+- **Checkpoint B (post-gate):** Write after the stage gate passes and `mission.stage` is updated. Content: full picture — `stage`, `mission_description`, `completed_agents` (id+task+files_modified+summary), `key_decisions`, `next_steps`. Write immediately after the corresponding `UPDATE mission SET stage=...`.
+
+**Stage transition schedule:**
+- Ideation complete → Checkpoint B (stage=research)
+- Synthesis complete → Checkpoint B (stage=prd)
+- PRD approved → Checkpoint A (stage=implement, planned wave) + Checkpoint B after artifact gate (stage=review)
+- Review passed → Checkpoint B (stage=test)
+- Tests pass → Checkpoint B (stage=done)
+
+**Recovery use:** After compaction, `memory_bootstrap` returns the most recent active checkpoint. If it is Checkpoint A, the stage was in progress — check `planned_agents` against `state.db` to determine which agents were actually spawned. If it is Checkpoint B, the stage gate passed — proceed to the next stage.
 
 **Step 1 — Create new checkpoint** (via `memory_remember_candidate` MCP tool):
 
@@ -460,10 +476,14 @@ codex-agent health               # verify codex available
 
 Always pass `-m` and `-r` explicitly when spawning — never rely on the CLI default.
 
-| Stage | Model env var | Reasoning env var | Default values |
-|-------|--------------|-------------------|----------------|
-| Research (2), Implementation (5), Testing (7) | `$CODEX_MODEL` | `$CODEX_REASONING` | `gpt-5.3-codex-spark`, `xhigh` |
-| Review (6) — Codex review agents only | `$CODEX_REVIEW_MODEL` | `$CODEX_REVIEW_REASONING` | `gpt-5.3-codex`, `high` |
+| Stage | Model env var | Reasoning env var | Default |
+|-------|--------------|-------------------|---------|
+| Research (2) — Codex path only | `$CODEX_RESEARCH_MODEL` | `$CODEX_RESEARCH_REASONING` | `gpt-5.3-codex`, `high` |
+| Implementation (5) | `$CODEX_IMPL_MODEL` | `$CODEX_IMPL_REASONING` | `gpt-5.3-codex-spark`, `xhigh` |
+| Testing (7) — Codex path only | `$CODEX_TEST_MODEL` | `$CODEX_TEST_REASONING` | `gpt-5.3-codex`, `high` |
+| Review (6) | `$CODEX_REVIEW_MODEL` | `$CODEX_REVIEW_REASONING` | `gpt-5.3-codex`, `high` |
+
+> Research and Testing default to Claude subagents (`CODEX_RESEARCH_MODE=claude`, `CODEX_TEST_MODE=spec-first`) — the Codex model vars only apply when mode is `codex` or `hybrid`.
 
 ### Stage Regression
 
@@ -515,7 +535,7 @@ codex-agent mission reconcile --dir "{cwd}"
 
 # 4. Re-spawn background watcher if any agents are still running
 STILL_RUNNING=$(sqlite3 _codex/state.db \
-  "SELECT COUNT(*) FROM agents WHERE status IN ('running','pending');")
+  "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
 # If STILL_RUNNING > 0, re-spawn the background watcher (Bash tool, run_in_background: true)
 ```
 

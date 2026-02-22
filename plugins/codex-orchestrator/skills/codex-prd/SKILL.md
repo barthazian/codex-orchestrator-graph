@@ -77,6 +77,20 @@ Write to `docs/prds/{kebab-case-feature-name}.md`:
 
 1. Write the PRD file using the template above
 2. Present the PRD to the user: paste the key sections (Problem, Solution, Implementation Plan) in the conversation
+
+### Auto-Approve Check
+
+Before waiting for user approval, check:
+```bash
+AUTO_APPROVE="${CODEX_AUTO_APPROVE:-0}"
+```
+
+If `AUTO_APPROVE=1`:
+- Skip user approval gate
+- Log: `sqlite3 _codex/state.db "INSERT INTO events (type, source, message) VALUES ('auto_approve', 'claude', 'PRD auto-approved. Advancing to Stage 5.');"`
+- Proceed directly to After User Approval steps
+
+If `AUTO_APPROVE=0` (default):
 3. **Wait for explicit user approval** — do NOT advance to Stage 5 until the user says something like "approved", "looks good", "proceed", "go ahead", or equivalent
 
 ### After User Approval

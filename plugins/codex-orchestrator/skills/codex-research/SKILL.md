@@ -36,9 +36,40 @@ Decompose the research into focused, independent questions. Each question become
 
 ---
 
-## Spawning Research Agents
+## Research Mode
 
-Research agents use the same spawn template as `codex-implement` with two differences:
+Read RESEARCH_MODE from env before doing anything else:
+
+```bash
+RESEARCH_MODE="${CODEX_RESEARCH_MODE:-claude}"
+```
+
+| Mode | When to use | Agents |
+|------|-------------|--------|
+| `claude` (default) | Greenfield, codebase analysis, web research | Claude subagents via Task tool |
+| `codex` | Research requires compilation/execution validation | Codex agents (`$CODEX_RESEARCH_MODEL`, high) |
+| `hybrid` | Synthesis from Claude + execution validation from Codex | Both |
+
+---
+
+## If RESEARCH_MODE=claude (default) — Claude Subagent Path
+
+For each research question, spawn a Task tool subagent:
+- `subagent_type=Explore` → codebase reads (Glob, Grep, Read)
+- `subagent_type=general-purpose` → web/docs research (WebSearch, WebFetch)
+
+Claude collects results in-memory and writes findings directly to
+`_codex/reviews/research-{focus}.md` after all subagents complete.
+
+**No state.db agent registration. No background watcher. No WHEN DONE block.**
+Return to orchestrator for Stage 3 immediately after all subagents complete.
+
+---
+
+## If RESEARCH_MODE=codex or hybrid — Codex Agent Path
+
+Spawn Codex agents using the template below. Research agents use the same spawn
+template as `codex-implement` with two differences:
 1. The CONSTRAINTS block includes a hard read-only instruction
 2. The WHEN DONE block writes findings to a markdown file, not a source file
 
@@ -51,26 +82,32 @@ Research agents use the same spawn template as `codex-implement` with two differ
 codex-agent mission status --json --dir "{cwd}"
 ```
 
-2. Register agent (NO file locks for research agents):
+2. Register agent as `pending` (NO file locks for research agents):
 ```bash
 sqlite3 _codex/state.db <<SQL
 INSERT INTO agents (id, task, sandbox) VALUES ('{jobId}', '{task}', 'workspace-write');
-INSERT INTO events (type, source, message) VALUES ('agent_spawn', 'claude', 'Spawned research agent {jobId}: {task}');
-UPDATE agents SET status='running' WHERE id='{jobId}';
-INSERT INTO events (type, source, message) VALUES ('agent_start', 'claude', 'Research agent {jobId} started');
+INSERT INTO events (type, source, message) VALUES ('agent_registered', 'claude', 'Registered research agent {jobId} (pending): {task}');
 SQL
 ```
 
-3. Generate context:
+3. Write mission context to file — do NOT embed in prompt:
 ```bash
-CONTEXT=$(codex-agent mission context --dir "{cwd}")
+codex-agent mission context --dir "{cwd}" > "_codex/mission-context.md"
 ```
 
-4. Write prompt file (`_codex/prompt-{agentId}.txt`):
+4. Read model config from env vars:
+```bash
+RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.3-codex}"
+RESEARCH_REASONING="${CODEX_RESEARCH_REASONING:-high}"
+```
+
+5. Write prompt file (`_codex/prompt-{agentId}.txt`):
 
 ```
-=== MISSION CONTEXT (pre-loaded by orchestrator — do not query the database) ===
-{output of: codex-agent mission context --dir "{cwd}"}
+=== MISSION CONTEXT ===
+Read _codex/mission-context.md as your FIRST action before starting your task.
+It contains: mission description, stage, other agents and their statuses,
+files locked by other agents (DO NOT modify these), recent events.
 
 === YOUR RESEARCH TASK ===
 
@@ -104,16 +141,19 @@ Structure your findings as:
 ## Recommendations
 [What this means for implementation]
 
-=== WHEN DONE ===
+⚠️ === MANDATORY FINAL STEP — DO NOT SKIP === ⚠️
 
-After writing your findings file, run this single command:
+Writing the findings file is NOT sufficient. The mission will deadlock if you do not run the sqlite3 command below.
+You MUST execute this shell command as your absolute last action, even if you think you are done:
 
 sqlite3 _codex/state.db <<'DONE'
 UPDATE agents SET status='completed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), files_modified='["_codex/reviews/research-[focus].md"]', summary='[2-3 sentence summary of key findings]' WHERE id='[jobId]';
 INSERT INTO events (type, source, message) VALUES ('agent_complete', 'agent-[jobId]', 'Research complete: [one-line finding]');
 DONE
 
-If you FAIL:
+Do not exit, do not say "done", do not stop — until AFTER the sqlite3 command above has been executed successfully.
+
+If you FAIL (for any reason):
 
 sqlite3 _codex/state.db <<'FAIL'
 UPDATE agents SET status='failed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), summary='[reason]' WHERE id='[jobId]';
@@ -121,20 +161,26 @@ INSERT INTO events (type, source, message) VALUES ('agent_fail', 'agent-[jobId]'
 FAIL
 ```
 
-5. Spawn:
+6. Spawn, then immediately mark `spawned`:
 ```bash
-codex-agent start "$(cat _codex/prompt-{agentId}.txt)" --map -m "$CODEX_MODEL" -r "$CODEX_REASONING"
+codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING"
+sqlite3 _codex/state.db <<SQL
+UPDATE agents SET status='spawned' WHERE id='{jobId}';
+INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Research agent {jobId} spawn command issued.');
+SQL
 ```
 
-### Background Watcher
+### Background Watcher (codex/hybrid mode only)
 
-After spawning all research agents, spawn a background watcher:
+**Only needed when RESEARCH_MODE=codex or hybrid.** Not needed for claude mode.
+
+After spawning all Codex research agents, spawn a background watcher:
 
 ```bash
 # Bash tool, run_in_background: true
 while true; do
   PENDING=$(sqlite3 _codex/state.db \
-    "SELECT COUNT(*) FROM agents WHERE status IN ('running','pending');")
+    "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
   [ "$PENDING" -eq 0 ] && break
   sleep 15
 done
@@ -169,12 +215,15 @@ sqlite3 _codex/state.db "INSERT INTO events (type, source, message) VALUES ('age
 
 ## Operational Policies
 
-### Model and Reasoning
+### Model and Reasoning (Codex path only)
 
 ```bash
-codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$CODEX_MODEL" -r "$CODEX_REASONING"
-# Defaults: gpt-5.3-codex-spark, xhigh
+RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.3-codex}"
+RESEARCH_REASONING="${CODEX_RESEARCH_REASONING:-high}"
+codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING"
 ```
+
+Claude subagent path (default) uses no Codex model — subagents inherit Claude's model.
 
 ### Prompt Size (Windows/MINGW)
 
