@@ -1,0 +1,21 @@
+{
+  "name": "codex-orchestrator-graph-marketplace",
+  "owner": {
+    "name": "barthazian",
+    "url": "https://github.com/barthazian"
+  },
+  "metadata": {
+    "description": "Stage-aware skill graph for the codex-orchestrator pipeline. Decomposed 7-stage factory: research, PRD, implementation, dual-model review, spec-first testing.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "codex-orchestrator",
+      "source": "./plugins/codex-orchestrator",
+      "description": "Decomposed codex-orchestrator pipeline with dedicated skills per stage. SQLite coordination, three-status agent progression, two-checkpoint blackboard, spec-first testing.",
+      "version": "1.0.0",
+      "category": "developer tools",
+      "keywords": ["codex", "orchestration", "agents", "pipeline", "skill-graph", "cross-platform"]
+    }
+  ]
+}
