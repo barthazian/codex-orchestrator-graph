@@ -48,12 +48,12 @@ bash plugins/codex-orchestrator/scripts/install.sh --update
 **Manual:**
 
 ```bash
-# Skills (the -g suffix identifies this as the graph version)
-cp -r plugins/codex-orchestrator/skills/codex-orchestrator  ~/.claude/skills/codex-orchestrator-g
-cp -r plugins/codex-orchestrator/skills/codex-implement     ~/.claude/skills/codex-implement-g
-cp -r plugins/codex-orchestrator/skills/codex-research      ~/.claude/skills/codex-research-g
-cp -r plugins/codex-orchestrator/skills/codex-prd           ~/.claude/skills/codex-prd-g
-cp -r plugins/codex-orchestrator/skills/codex-test          ~/.claude/skills/codex-test-g
+# Skills
+cp -r plugins/codex-orchestrator/skills/codex-orchestrator  ~/.claude/skills/codex-orchestrator
+cp -r plugins/codex-orchestrator/skills/codex-implement     ~/.claude/skills/codex-implement
+cp -r plugins/codex-orchestrator/skills/codex-research      ~/.claude/skills/codex-research
+cp -r plugins/codex-orchestrator/skills/codex-prd           ~/.claude/skills/codex-prd
+cp -r plugins/codex-orchestrator/skills/codex-test          ~/.claude/skills/codex-test
 
 # Agent
 mkdir -p ~/.claude/agents

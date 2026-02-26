@@ -161,9 +161,9 @@ install_skills() {
   info "Installing skills to ${CLAUDE_DIR}/skills/"
   for skill_dir in "${PLUGIN_DIR}/skills"/*/; do
     skill_name=$(basename "${skill_dir}")
-    dest_dir="${CLAUDE_DIR}/skills/${skill_name}-g"
+    dest_dir="${CLAUDE_DIR}/skills/${skill_name}"
     mkdir -p "${dest_dir}"
-    install_file "${skill_dir}/SKILL.md" "${dest_dir}/SKILL.md" "${skill_name}-g"
+    install_file "${skill_dir}/SKILL.md" "${dest_dir}/SKILL.md" "${skill_name}"
   done
 
   echo ""
@@ -183,7 +183,7 @@ verify() {
   echo ""
 
   local all_ok=1
-  for skill in codex-orchestrator-g codex-implement-g codex-research-g codex-prd-g codex-test-g; do
+  for skill in codex-orchestrator codex-implement codex-research codex-prd codex-test; do
     if [[ -f "${CLAUDE_DIR}/skills/${skill}/SKILL.md" ]]; then
       echo -e "  ${GREEN}✓${NC} ${skill}"
     else

@@ -62,11 +62,11 @@ test       → done        when: all tests pass + coverage >= 80%
 ## How Skills Are Invoked
 
 ```
-Skill("codex-research-g")  → stage skill runs → findings written → returns
-Skill("codex-prd-g")       → stage skill runs → PRD approved → returns
-Skill("codex-implement-g") → stage skill runs → build gate passes → returns
+Skill("codex-research")  → stage skill runs → findings written → returns
+Skill("codex-prd")       → stage skill runs → PRD approved → returns
+Skill("codex-implement") → stage skill runs → build gate passes → returns
 Skill("codex-reviewer")    → agent runs → synthesis.md written → returns
-Skill("codex-test-g")      → stage skill runs → tests pass → returns
+Skill("codex-test")      → stage skill runs → tests pass → returns
 ```
 
 ---

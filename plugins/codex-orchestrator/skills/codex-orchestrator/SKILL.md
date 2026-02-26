@@ -130,17 +130,17 @@ USER'S REQUEST
      v
 1. IDEATION        (Claude + User)
      |
-2. RESEARCH        (→ Skill: codex-research-g)
+2. RESEARCH        (→ Skill: codex-research)
      |
 3. SYNTHESIS       (Claude)
      |
-4. PRD             (→ Skill: codex-prd-g)
+4. PRD             (→ Skill: codex-prd)
      |
-5. IMPLEMENTATION  (→ Skill: codex-implement-g)
+5. IMPLEMENTATION  (→ Skill: codex-implement)
      |
 6. REVIEW          (→ Agent: codex-reviewer)
      |
-7. TESTING         (→ Skill: codex-test-g)
+7. TESTING         (→ Skill: codex-test)
 ```
 
 At each stage gate, Claude invokes the relevant skill via the `Skill` tool, waits for it to return, then reads the outcome from `state.db` to decide the next transition.
@@ -150,12 +150,12 @@ At each stage gate, Claude invokes the relevant skill via the `Skill` tool, wait
 | Signal | Stage | Action |
 |--------|-------|--------|
 | New feature request, vague problem | IDEATION | Discuss with user, clarify scope |
-| "investigate", "research", "understand" | RESEARCH | `Skill("codex-research-g")` |
+| "investigate", "research", "understand" | RESEARCH | `Skill("codex-research")` |
 | Agent findings ready, need synthesis | SYNTHESIS | Claude reviews, filters, combines |
-| "let's plan", "create PRD", synthesis done | PRD | `Skill("codex-prd-g")` |
-| PRD exists, "implement", "build" | IMPLEMENTATION | `Skill("codex-implement-g")` |
+| "let's plan", "create PRD", synthesis done | PRD | `Skill("codex-prd")` |
+| PRD exists, "implement", "build" | IMPLEMENTATION | `Skill("codex-implement")` |
 | Implementation done, "review" | REVIEW | `Skill("codex-reviewer")` |
-| "test", "verify", review passed | TESTING | `Skill("codex-test-g")` |
+| "test", "verify", review passed | TESTING | `Skill("codex-test")` |
 
 ### Codebase Map (Auto-Managed)
 
@@ -175,7 +175,7 @@ Talk through the problem with the user. Understand what they want. Plan how to d
 ### Stage 2: Research
 
 ```
-Skill("codex-research-g")
+Skill("codex-research")
 ```
 
 The `codex-research` skill owns Stage 2 spawn templates, research synthesis pattern, and agent decomposition for research questions. Returns when all research agents complete.
@@ -187,7 +187,7 @@ Review agent outputs via `codex-agent jobs --json` and `codex-agent events <id>`
 ### Stage 4: PRD
 
 ```
-Skill("codex-prd-g")
+Skill("codex-prd")
 ```
 
 The `codex-prd` skill owns PRD format, user approval loop, and file writing to `docs/prds/`. Returns after user explicitly approves the PRD.
@@ -195,7 +195,7 @@ The `codex-prd` skill owns PRD format, user approval loop, and file writing to `
 ### Stage 5: Implementation
 
 ```
-Skill("codex-implement-g")
+Skill("codex-implement")
 ```
 
 The `codex-implement` skill owns the full spawn template, file pre-locking, artifact gate, host build verification, and map update gate. Returns when all gates pass.
@@ -215,7 +215,7 @@ After it returns, check `_codex/reviews/synthesis.md` for ELEVATE/CRITICAL findi
 ### Stage 7: Testing
 
 ```
-Skill("codex-test-g")
+Skill("codex-test")
 ```
 
 The `codex-test` skill owns test agent spawn templates, test execution, and coverage verification. Returns when all tests pass.
