@@ -183,7 +183,7 @@ verify() {
   echo ""
 
   local all_ok=1
-  for skill in codex-orchestrator codex-implement codex-research codex-prd codex-test; do
+  for skill in codex-orchestrator codex-implement codex-research codex-prd codex-reviewer codex-test; do
     if [[ -f "${CLAUDE_DIR}/skills/${skill}/SKILL.md" ]]; then
       echo -e "  ${GREEN}✓${NC} ${skill}"
     else
