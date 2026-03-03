@@ -150,11 +150,17 @@ CONSTRAINTS:
 
 === WHEN DONE ===
 
-Run this single command to report completion (works in PowerShell and bash):
-sqlite3 _codex/state.db "UPDATE agents SET status='completed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), files_modified='[FILES_JSON_ARRAY]', summary='[2-3 sentence summary]' WHERE id='[jobId]'; INSERT INTO events (type, source, message) VALUES ('agent_complete','agent-[jobId]','Completed: [one-line summary]');"
+Run this heredoc to report completion (works in PowerShell, bash, and MINGW64 — no quote escaping needed):
+sqlite3 _codex/state.db <<'SQL'
+UPDATE agents SET status='completed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), files_modified='[FILES_JSON_ARRAY]', summary='[2-3 sentence summary]' WHERE id='[jobId]';
+INSERT INTO events (type, source, message) VALUES ('agent_complete','agent-[jobId]','Completed: [one-line summary]');
+SQL
 
 If you FAIL or cannot complete the task:
-sqlite3 _codex/state.db "UPDATE agents SET status='failed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), summary='[reason for failure]' WHERE id='[jobId]'; INSERT INTO events (type, source, message) VALUES ('agent_fail','agent-[jobId]','Failed: [reason]');"
+sqlite3 _codex/state.db <<'SQL'
+UPDATE agents SET status='failed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'), summary='[reason for failure]' WHERE id='[jobId]';
+INSERT INTO events (type, source, message) VALUES ('agent_fail','agent-[jobId]','Failed: [reason]');
+SQL
 ```
 
 **Size check — MANDATORY before spawning:**
@@ -178,16 +184,16 @@ codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$IMPL_MODEL" -r "$IMP
 
 ### After Spawning
 
-Immediately after the spawn command returns (before spawning the next agent), update status to `spawned`:
+Immediately after the spawn command returns (before spawning the next agent), update status to `running` and record the job ID:
 
 ```bash
 sqlite3 _codex/state.db <<SQL
-UPDATE agents SET status='spawned' WHERE id='{jobId}';
-INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Agent {jobId} spawn command issued. Process starting.');
+UPDATE agents SET status='running' WHERE id='{jobId}';
+INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Agent {jobId} spawned. Job ID: {jobId_from_codex}.');
 SQL
 ```
 
-**Why this matters:** The gap between `pending` (registered) and `spawned` (command issued) is where context compaction causes phantom agents. Once you see `spawned` in state.db you know the process was handed off to the OS. A `pending` agent after compaction recovery means the spawn was never attempted and can be safely re-spawned. A `spawned` agent means check `codex-agent jobs --json` — the process may be alive.
+**Why this matters:** The gap between `pending` (registered) and `running` (command issued) is where context compaction causes phantom agents. A `pending` agent after compaction recovery means the spawn was never attempted and can be safely re-spawned. A `running` agent means check `codex-agent jobs --json` — the process may be alive. Note: the DB schema only allows `pending`, `running`, `completed`, `failed` — do NOT use `spawned`.
 
 Proceed to spawn the next agent or begin monitoring.
 
@@ -195,12 +201,21 @@ After spawning **all** agents for a wave, immediately spawn a background watcher
 
 ```bash
 # Run ONCE after all agents are spawned — Bash tool, run_in_background: true
-while true; do
+# Timeout: 55 min (stays under Claude Code's 60-min background kill threshold)
+ELAPSED=0; TIMEOUT=3300
+while [ $ELAPSED -lt $TIMEOUT ]; do
   PENDING=$(sqlite3 _codex/state.db \
-    "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
+    "SELECT COUNT(*) FROM agents WHERE status IN ('pending','running');")
   [ "$PENDING" -eq 0 ] && break
   sleep 15
+  ELAPSED=$((ELAPSED + 15))
 done
+# Auto-fail any agents still stuck in running after timeout
+sqlite3 _codex/state.db <<'SQL'
+UPDATE agents SET status='failed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+  summary='Did not self-report within timeout. Marked failed by watcher.'
+WHERE status='running' AND completed_at IS NULL;
+SQL
 echo "CODEX_AGENTS_DONE"
 ```
 
@@ -238,7 +253,7 @@ sqlite3 _codex/state.db "DELETE FROM file_locks WHERE agent_id='{jobId}';"
 3. **Claude writes context to `_codex/mission-context.md` before each spawn.** Agents read it on turn 1 — they NEVER run sqlite3 SELECT queries.
 4. **Claude pre-locks ALL files.** Before writing the prompt, Claude INSERTs file locks for every file the agent will modify. Agents NEVER run INSERT INTO file_locks.
 5. **Claude handles lock cleanup.** After agent completion/failure, Claude DELETEs the agent's file locks. Agents NEVER run DELETE FROM file_locks.
-6. **Agents report completion with a single sqlite3 command (one-liner, double-quoted, PowerShell and bash compatible).** One sqlite3 call with UPDATE + INSERT. That's it. No other DB writes during the agent's lifetime.
+6. **Agents report completion with a sqlite3 heredoc (`<<'SQL' ... SQL`).** One heredoc with UPDATE + INSERT. No quote escaping needed — works identically on PowerShell, bash, and MINGW64. That's it. No other DB writes during the agent's lifetime.
 7. **No checkpoint writes.** Claude monitors agent progress via `codex-agent capture <id>`. Checkpoints waste turns for marginal coordination value.
 8. **For review agents**, omit YOUR FILES section. Add: `Write your findings to _codex/reviews/codex-{focus}.md. Do NOT modify source code.`
 9. **For UI work**, include the production-grade UI constraint. For non-UI work, omit it.
