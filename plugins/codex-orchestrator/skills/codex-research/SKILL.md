@@ -97,7 +97,7 @@ codex-agent mission context --dir "{cwd}" > "_codex/mission-context.md"
 
 4. Read model config from env vars:
 ```bash
-RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.3-codex}"
+RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.4}"
 RESEARCH_REASONING="${CODEX_RESEARCH_REASONING:-high}"
 ```
 
@@ -218,7 +218,7 @@ sqlite3 _codex/state.db "INSERT INTO events (type, source, message) VALUES ('age
 ### Model and Reasoning (Codex path only)
 
 ```bash
-RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.3-codex}"
+RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.4}"
 RESEARCH_REASONING="${CODEX_RESEARCH_REASONING:-high}"
 codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING"
 ```

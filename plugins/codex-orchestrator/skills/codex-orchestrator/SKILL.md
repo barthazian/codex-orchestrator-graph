@@ -460,7 +460,7 @@ codex-agent health               # verify codex available
 
 | Setting | Default | Why |
 |---------|---------|-----|
-| Model | `gpt-5.3-codex` | Latest and most capable Codex model |
+| Model | `gpt-5.4` | Latest and most capable model (default) |
 | Reasoning | `xhigh` | Maximum reasoning depth |
 | Sandbox | `workspace-write` | Agents can modify files by default |
 
@@ -472,10 +472,10 @@ Always pass `-m` and `-r` explicitly when spawning — never rely on the CLI def
 
 | Stage | Model env var | Reasoning env var | Default |
 |-------|--------------|-------------------|---------|
-| Research (2) — Codex path only | `$CODEX_RESEARCH_MODEL` | `$CODEX_RESEARCH_REASONING` | `gpt-5.3-codex`, `high` |
+| Research (2) — Codex path only | `$CODEX_RESEARCH_MODEL` | `$CODEX_RESEARCH_REASONING` | `gpt-5.4`, `high` |
 | Implementation (5) | `$CODEX_IMPL_MODEL` | `$CODEX_IMPL_REASONING` | `gpt-5.3-codex-spark`, `xhigh` |
 | Testing (7) — Codex path only | `$CODEX_TEST_MODEL` | `$CODEX_TEST_REASONING` | `gpt-5.3-codex`, `high` |
-| Review (6) | `$CODEX_REVIEW_MODEL` | `$CODEX_REVIEW_REASONING` | `gpt-5.3-codex`, `high` |
+| Review (6) | `$CODEX_REVIEW_MODEL` | `$CODEX_REVIEW_REASONING` | `gpt-5.4`, `high` |
 
 > Research and Testing default to Claude subagents (`CODEX_RESEARCH_MODE=claude`, `CODEX_TEST_MODE=spec-first`) — the Codex model vars only apply when mode is `codex` or `hybrid`.
 

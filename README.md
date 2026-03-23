@@ -183,13 +183,13 @@ Never use `-s read-only`. SQLite WAL mode requires write access for `-wal`/`-shm
 |----------|---------|-------|-------|
 | `CODEX_IMPL_MODEL` | `gpt-5.3-codex-spark` | 5 | Implementation agents |
 | `CODEX_IMPL_REASONING` | `xhigh` | 5 | |
-| `CODEX_RESEARCH_MODEL` | `gpt-5.3-codex` | 2 | Codex/hybrid mode only |
+| `CODEX_RESEARCH_MODEL` | `gpt-5.4` | 2 | Codex/hybrid mode only |
 | `CODEX_RESEARCH_REASONING` | `high` | 2 | |
 | `CODEX_RESEARCH_MODE` | `claude` | 2 | `claude` / `codex` / `hybrid` |
 | `CODEX_TEST_MODEL` | `gpt-5.3-codex` | 7 | codex-direct mode only |
 | `CODEX_TEST_REASONING` | `high` | 7 | |
 | `CODEX_TEST_MODE` | `spec-first` | 7 | `spec-first` / `codex-direct` |
-| `CODEX_REVIEW_MODEL` | `gpt-5.3-codex` | 6 | |
+| `CODEX_REVIEW_MODEL` | `gpt-5.4` | 6 | |
 | `CODEX_REVIEW_REASONING` | `high` | 6 | |
 | `CODEX_AUTO_APPROVE` | `0` | 4 | `1` = skip PRD user approval gate |
 
