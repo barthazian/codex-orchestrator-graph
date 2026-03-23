@@ -18,8 +18,13 @@ if (!target || !output) {
 }
 
 // --- Verify codex on PATH ---
-try { execFileSync("which", ["codex"], { stdio: "ignore" }); }
-catch { process.stderr.write("codex not found on PATH\n"); process.exit(1); }
+const isWindows = process.platform === "win32";
+try {
+  execFileSync(isWindows ? "where" : "which", ["codex"], { stdio: "ignore" });
+} catch {
+  process.stderr.write("codex not found on PATH\n");
+  process.exit(1);
+}
 
 // --- Resolve WebSocket constructor ---
 let WS = globalThis.WebSocket;
@@ -37,7 +42,7 @@ const port = await new Promise((resolve, reject) => {
 
 // --- Spawn app-server ---
 const wsUrl = `ws://127.0.0.1:${port}`;
-const server = spawn("codex", ["app-server", "--listen", wsUrl], { cwd, stdio: "ignore" });
+const server = spawn("codex", ["app-server", "--listen", wsUrl], { cwd, stdio: "ignore", shell: isWindows });
 let killed = false;
 const cleanup = () => { if (!killed) { killed = true; server.kill(); } };
 process.on("exit", cleanup);
@@ -51,14 +56,17 @@ server.on("exit", (code) => {
 
 // --- Connect WebSocket with retry ---
 const connect = () => new Promise((resolve, reject) => {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 10000;
   const attempt = () => {
-    const ws = new WS(wsUrl);
-    ws.onopen = () => resolve(ws);
-    ws.onerror = () => {
-      ws.close?.();
-      if (Date.now() < deadline) setTimeout(attempt, 500);
-      else reject(new Error("WebSocket connect timeout"));
+    if (Date.now() > deadline) { reject(new Error("WebSocket connect timeout")); return; }
+    const sock = new WS(wsUrl);
+    let settled = false;
+    sock.onopen = () => { settled = true; resolve(sock); };
+    sock.onerror = (err) => {
+      if (settled) return;
+      settled = true;
+      try { sock.close(); } catch (closeErr) { /* retry handles this — close can re-fire onerror */ }
+      setTimeout(attempt, 500);
     };
   };
   attempt();
@@ -94,15 +102,31 @@ const timer = setTimeout(() => {
 
 // --- Protocol ---
 let threadId;
+let phase = "init"; // init → initialized → thread → review → done
 
 ws.onmessage = (ev) => {
   const data = typeof ev.data === "string" ? ev.data : ev.data.toString();
   let msg;
   try { msg = JSON.parse(data); } catch { return; }
 
+  // Response to initialize
+  if (phase === "init" && msg.id === 1 && msg.result) {
+    phase = "initialized";
+    // Send initialized notification (no id — it's a notification)
+    ws.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+    send("thread/start", {});
+    return;
+  }
+
   // Response to thread/start
-  if (msg.id === 1 && msg.result) {
-    threadId = msg.result.threadId;
+  if (phase === "initialized" && msg.id === 2 && msg.result) {
+    threadId = msg.result.threadId || msg.result.thread?.id;
+    if (!threadId) {
+      process.stderr.write(`No threadId in thread/start response: ${JSON.stringify(msg.result).slice(0, 200)}\n`);
+      cleanup();
+      process.exit(1);
+    }
+    phase = "review";
     send("review/start", { threadId, delivery: "inline", target: parseTarget(target) });
     return;
   }
@@ -110,6 +134,7 @@ ws.onmessage = (ev) => {
   // Notification: item/completed with exitedReviewMode
   if (msg.method === "item/completed" &&
       msg.params?.item?.type === "exitedReviewMode") {
+    phase = "done";
     clearTimeout(timer);
     writeFileSync(output, msg.params.item.review ?? "", "utf8");
     ws.close?.();
@@ -125,5 +150,7 @@ ws.onerror = (err) => {
   process.exit(1);
 };
 
-// --- Start ---
-send("thread/start", {});
+// --- Start: send initialize handshake ---
+send("initialize", {
+  clientInfo: { name: "codex-review-mjs", title: "Codex Review Script", version: "1.0.0" }
+});
