@@ -13,7 +13,7 @@ The `codex-orchestrator` pipeline decomposes software tasks into a 7-stage facto
 | 3 | Synthesis | Claude |
 | 4 | PRD | `codex-prd` skill |
 | 5 | Implementation | `codex-implement` skill |
-| 6 | Review | `codex-reviewer` agent |
+| 6 | Review | `codex-reviewer` skill |
 | 7 | Testing | `codex-test` skill |
 
 Coordination is 100% SQLite-based (`_codex/state.db`). No shared memory, no polling external APIs.
@@ -55,9 +55,9 @@ cp -r plugins/codex-orchestrator/skills/codex-research      ~/.claude/skills/cod
 cp -r plugins/codex-orchestrator/skills/codex-prd           ~/.claude/skills/codex-prd
 cp -r plugins/codex-orchestrator/skills/codex-test          ~/.claude/skills/codex-test
 
-# Agent
-mkdir -p ~/.claude/agents
-cp plugins/codex-orchestrator/agents/codex-reviewer.md ~/.claude/agents/codex-reviewer.md
+# Review script
+mkdir -p ~/.claude/scripts
+cp plugins/codex-orchestrator/scripts/codex-review.mjs ~/.claude/scripts/codex-review.mjs
 ```
 
 ### Authenticate
@@ -79,15 +79,16 @@ test -d .git && echo "GIT OK" || echo "WARNING: no .git — run git init in your
 
 ```
 plugins/codex-orchestrator/
-├── agents/
-│   └── codex-reviewer.md       # Stage 6: dual-model review (Claude agent, model: sonnet)
 ├── commands/
 │   └── codex-orchestrator.md   # Slash command entry point → routes to skill
+├── scripts/
+│   └── codex-review.mjs       # WebSocket client for Codex app-server review API
 └── skills/
     ├── codex-orchestrator/     # Graph routing, stage transitions, SQLite state protocol
     ├── codex-implement/        # Stage 5: Codex agent spawning, file locks, build gate
     ├── codex-research/         # Stage 2: Research (claude / codex / hybrid modes)
     ├── codex-prd/              # Stage 4: PRD format + user approval loop
+    ├── codex-reviewer/         # Stage 6: Parallel Codex + Claude review, KEEP/DISCARD/ELEVATE
     └── codex-test/             # Stage 7: Spec-first testing + coverage gate
 ```
 
@@ -129,16 +130,15 @@ codex-orchestrator  ◄──────── graph routing + SQLite state mac
 
 All agent state lives in `_codex/state.db`: agent registration, file locks, events, review findings. Claude writes; agents self-report completion with a single sqlite3 heredoc. Agents never query the database — context is pre-written to `_codex/mission-context.md` before each spawn.
 
-### Three-Status Agent Progression
+### Agent Status Progression
 
 ```
-pending  →  spawned  →  running  →  completed / failed
+pending  →  running  →  completed / failed
 ```
 
 Eliminates phantom agents from context compaction:
 - `pending` = registered, spawn command not yet issued → safe to re-spawn
-- `spawned` = command issued, process handed to OS → check `codex-agent jobs --json`
-- `running` = agent self-reported it started
+- `running` = command issued, process may be alive → check `codex-agent jobs --json`
 
 ### Two-Checkpoint Blackboard Protocol
 
@@ -162,7 +162,7 @@ Claude reads source files directly and writes exact test specs (function signatu
 ### Dual-Model Code Review (Stage 6)
 
 Two independent signals combined:
-1. `codex review --uncommitted` — Codex CLI static analysis on uncommitted diff
+1. Codex app-server review/start — real Codex review engine via WebSocket (uses login auth)
 2. 5 parallel Claude subagents — bugs, error handling, security, financial safety, CLAUDE.md compliance
 
 Orchestrating Claude reads source files directly and judges each finding: **KEEP**, **DISCARD**, or **ELEVATE** (flagged independently by both signals).
@@ -232,6 +232,6 @@ codex-agent mission reconcile --dir .
 
 # 5. Re-spawn background watcher if agents still running
 STILL_RUNNING=$(sqlite3 _codex/state.db \
-  "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
+  "SELECT COUNT(*) FROM agents WHERE status IN ('pending','running');")
 # If > 0, spawn watcher (Bash tool, run_in_background: true)
 ```

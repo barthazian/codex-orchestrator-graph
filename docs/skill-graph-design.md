@@ -6,7 +6,7 @@ _Initial design captured 2026-02-21. Updated to reflect completed implementation
 
 The original `codex-orchestrator` SKILL.md was ~1,010 lines — both the graph routing logic AND all stage node implementations in a single file. Claude loaded the full 1,010 lines on every invocation (~15-20k tokens before any work began).
 
-Stage 6 was duplicated: the SKILL.md described the full review protocol inline AND `codex-reviewer.md` implemented the same protocol as a standalone agent. They drifted out of sync whenever either was updated.
+Stage 6 was originally duplicated between the orchestrator SKILL.md and a standalone agent file. This redesign eliminated the agent entirely — the protocol now lives only in the codex-reviewer skill.
 
 ---
 
@@ -21,7 +21,7 @@ codex-orchestrator  ← graph traversal, state machine, coordination only
   |--[Stage 2]--> codex-research   skill
   |--[Stage 4]--> codex-prd        skill
   |--[Stage 5]--> codex-implement  skill
-  |--[Stage 6]--> codex-reviewer   agent
+  |--[Stage 6]--> codex-reviewer   skill
   |--[Stage 7]--> codex-test       skill
 ```
 
@@ -39,7 +39,7 @@ No direct skill-to-skill calls. Everything routes through the orchestrator.
 | `codex-research` | Stage 2 spawn template, research synthesis pattern (claude/codex/hybrid modes) | Anything outside Stage 2 |
 | `codex-prd` | PRD format, user approval loop, auto-approve flag | Agent spawning |
 | `codex-implement` | Stage 5 spawn template, file locks, artifact gate, background watcher, build verification, timing, spec file protocol | Review logic |
-| `codex-reviewer` | Full dual-model review: Codex CLI + 5 Claude agents → KEEP/DISCARD/ELEVATE → synthesis.md | Everything else |
+| `codex-reviewer` | Full review protocol: state.db context query, parallel Codex app-server review + 5 Claude agents → KEEP/DISCARD/ELEVATE → synthesis.md | Everything else |
 | `codex-test` | Stage 7 spawn template, spec-first mode, language-aware preflight, coverage verification | Implementation |
 
 ---
@@ -65,7 +65,7 @@ test       → done        when: all tests pass + coverage >= 80%
 Skill("codex-research")  → stage skill runs → findings written → returns
 Skill("codex-prd")       → stage skill runs → PRD approved → returns
 Skill("codex-implement") → stage skill runs → build gate passes → returns
-Skill("codex-reviewer")    → agent runs → synthesis.md written → returns
+Skill("codex-reviewer")    → skill runs in main session → synthesis.md written → returns
 Skill("codex-test")      → stage skill runs → tests pass → returns
 ```
 
@@ -80,7 +80,7 @@ Skill("codex-test")      → stage skill runs → tests pass → returns
 | `codex-research` | ~200 | claude/codex/hybrid modes + spawn template |
 | `codex-prd` | ~100 | PRD format + approval loop |
 | `codex-test` | ~280 | Spec-first mode + language preflight + spawn template |
-| `codex-reviewer` | ~110 | Dual-model review protocol (agent, not skill) |
+| `codex-reviewer` | ~200 | Full review protocol (skill, runs in main session) |
 
 **Context loaded per turn:**
 - Before: 1,010 lines always
@@ -102,7 +102,7 @@ Original design had two statuses: `running` (on register) and `completed`/`faile
 - `spawned` = command issued, process handed to OS (check `codex-agent jobs --json`)
 - `running` = agent self-reported start (legacy; agents may skip this)
 
-SQL schema updated: `CHECK (status IN ('pending', 'spawned', 'running', 'completed', 'failed'))`
+SQL schema updated: `CHECK (status IN ('pending', 'running', 'completed', 'failed'))`
 
 ### 2. Two-Checkpoint Blackboard Protocol
 
@@ -147,23 +147,14 @@ Codex CLI `-f file.txt` appends full file content to `CODEX_PROMPT` env var, exh
 
 ---
 
-## Stage 6 Deduplication
+## Stage 6 Design
 
-The original SKILL.md described the full review protocol inline (~130 lines), identical to `codex-reviewer.md`. After decomposition, Stage 6 in the orchestrator SKILL.md is:
+Stage 6 is implemented as a skill (`codex-reviewer`) that runs directly in the main session. There is no separate agent file — the skill owns the complete protocol:
 
-```
-### Stage 6: Review
+1. Deterministic gate (build must pass)
+2. Query `_codex/state.db` for implementation context (mission, agent tasks, summaries)
+3. Parallel launch: Codex app-server review + 5 Claude agents (simultaneously)
+4. Judge all findings: KEEP/DISCARD/ELEVATE
+5. Write synthesis to `_codex/reviews/synthesis.md`
 
-Skill("codex-reviewer")
-
-The `codex-reviewer` agent runs the full dual-model review protocol
-(deterministic gate → codex review → 5 Claude agents → orchestrating Claude
-judgment → synthesis). It is the authoritative source for Stage 6 — do not
-re-implement its protocol here.
-
-After it returns, check _codex/reviews/synthesis.md for ELEVATE/CRITICAL findings:
-- If any exist: loop back to Stage 5 (spawn fix agents via codex-implement)
-- If none: advance to Stage 7
-```
-
-Full protocol lives only in `codex-reviewer.md`. No duplication.
+The Codex review uses the real review engine via `codex app-server` + WebSocket (`codex-review.mjs`), not a CLI subcommand.
