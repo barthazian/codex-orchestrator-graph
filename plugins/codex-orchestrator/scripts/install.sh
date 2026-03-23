@@ -167,11 +167,15 @@ install_skills() {
   done
 
   echo ""
-  info "Installing agents to ${CLAUDE_DIR}/agents/"
+  info "Installing scripts to ${CLAUDE_DIR}/scripts/"
+  mkdir -p "${CLAUDE_DIR}/scripts"
   install_file \
-    "${PLUGIN_DIR}/agents/codex-reviewer.md" \
-    "${CLAUDE_DIR}/agents/codex-reviewer.md" \
-    "codex-reviewer"
+    "${PLUGIN_DIR}/scripts/codex-review.mjs" \
+    "${CLAUDE_DIR}/scripts/codex-review.mjs" \
+    "codex-review.mjs"
+
+  # Clean up stale agent file from previous versions
+  rm -f "${CLAUDE_DIR}/agents/codex-reviewer.md"
 }
 
 # -------------------------------------------------------------------
@@ -192,16 +196,16 @@ verify() {
     fi
   done
 
-  if [[ -f "${CLAUDE_DIR}/agents/codex-reviewer.md" ]]; then
-    echo -e "  ${GREEN}✓${NC} codex-reviewer (agent)"
+  if [[ -f "${CLAUDE_DIR}/scripts/codex-review.mjs" ]]; then
+    echo -e "  ${GREEN}✓${NC} codex-review.mjs (script)"
   else
-    echo -e "  ${RED}✗${NC} codex-reviewer — missing"
+    echo -e "  ${RED}✗${NC} codex-review.mjs — missing"
     all_ok=0
   fi
 
   echo ""
   if [[ "$all_ok" -eq 1 ]]; then
-    success "All skills and agents installed."
+    success "All skills and scripts installed."
   else
     error "Some files are missing. Re-run with --update."
     exit 1
