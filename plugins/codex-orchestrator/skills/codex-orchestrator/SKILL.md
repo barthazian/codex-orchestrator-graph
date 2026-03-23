@@ -76,7 +76,7 @@ Claude breaks work into focused, independent tasks and spawns a Codex agent for 
 
 ### Rule 3: Claude Subagents for Review
 
-Use Claude subagents (Task tool) during Stage 6 (Review) for dual-model code review. Claude subagents return results in-memory — they do NOT write to disk. All code execution goes to Codex agents.
+The `codex-reviewer` skill uses Claude subagents (Task tool) during Stage 6 for parallel code review. Claude subagents return findings in-memory. The Codex review runs via the app-server as a background task.
 
 ### Rule 4: Write Ownership Is Strict
 
@@ -138,7 +138,7 @@ USER'S REQUEST
      |
 5. IMPLEMENTATION  (→ Skill: codex-implement)
      |
-6. REVIEW          (→ Agent: codex-reviewer)
+6. REVIEW          (→ Skill: codex-reviewer)
      |
 7. TESTING         (→ Skill: codex-test)
 ```
@@ -202,14 +202,14 @@ The `codex-implement` skill owns the full spawn template, file pre-locking, arti
 
 ### Stage 6: Review
 
-```
 Skill("codex-reviewer")
-```
 
-The `codex-reviewer` agent runs the full dual-model review protocol (deterministic gate → codex review → 5 Claude agents → orchestrating Claude judgment → synthesis). It is the authoritative source for Stage 6 — do not re-implement its protocol here.
+The `codex-reviewer` skill runs the full review protocol in the main session:
+deterministic gate → state.db context query → parallel Codex app-server review +
+5 Claude agents → KEEP/DISCARD/ELEVATE judgment → synthesis.
 
 After it returns, check `_codex/reviews/synthesis.md` for ELEVATE/CRITICAL findings:
-- If any exist: loop back to Stage 5 (spawn fix agents via `codex-implement`)
+- If any exist: loop back to Stage 5 (spawn fix agents via codex-implement)
 - If none: advance to Stage 7
 
 ### Stage 7: Testing
@@ -482,7 +482,7 @@ Always pass `-m` and `-r` explicitly when spawning — never rely on the CLI def
 ### Stage Regression
 
 - Review findings (Stage 6) can trigger loop back to Implementation (Stage 5).
-- Claude invokes `codex-implement` again for fix agents, then re-invokes `codex-reviewer`.
+- Claude invokes `codex-implement` again for fix agents, then re-invokes `Skill("codex-reviewer")`.
 
 ### Data Integrity
 
