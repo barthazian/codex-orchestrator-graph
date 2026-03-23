@@ -1,0 +1,8 @@
+{
+  "name": "codex-orchestrator",
+  "description": "Decomposed 7-stage skill graph for orchestrating OpenAI Codex agents from Claude Code. SQLite coordination, dual-model review, spec-first testing.",
+  "author": {
+    "name": "barthazian",
+    "url": "https://github.com/barthazian"
+  }
+}
