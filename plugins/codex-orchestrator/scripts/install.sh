@@ -157,6 +157,59 @@ install_file() {
   fi
 }
 
+install_cli() {
+  local CLI_SRC="${PLUGIN_DIR}/cli"
+  local CLI_DEST="${HOME}/.codex-orchestrator"
+
+  info "Installing codex-agent CLI to ${CLI_DEST}/"
+
+  mkdir -p "${CLI_DEST}/src/controller" "${CLI_DEST}/bin"
+
+  # Copy source files
+  for f in cli.ts config.ts exec.ts files.ts jobs.ts; do
+    install_file "${CLI_SRC}/src/${f}" "${CLI_DEST}/src/${f}" "src/${f}"
+  done
+  install_file "${CLI_SRC}/src/controller/stateStore.ts" "${CLI_DEST}/src/controller/stateStore.ts" "src/controller/stateStore.ts"
+  install_file "${CLI_SRC}/package.json" "${CLI_DEST}/package.json" "package.json"
+
+  # Install bin scripts
+  install_file "${CLI_SRC}/bin/codex-agent" "${CLI_DEST}/bin/codex-agent" "bin/codex-agent"
+  chmod +x "${CLI_DEST}/bin/codex-agent"
+  if [ "$PLATFORM" = "windows" ]; then
+    install_file "${CLI_SRC}/bin/codex-agent.cmd" "${CLI_DEST}/bin/codex-agent.cmd" "bin/codex-agent.cmd"
+  fi
+
+  # Install npm dependencies (glob)
+  if [ -f "${CLI_DEST}/package.json" ]; then
+    (cd "${CLI_DEST}" && bun install --frozen-lockfile 2>/dev/null || bun install 2>/dev/null) && \
+      success "CLI dependencies installed" || \
+      warn "bun install failed — codex-agent may not work without dependencies"
+  fi
+
+  # Add to PATH if not already there
+  if ! echo "$PATH" | grep -q "${CLI_DEST}/bin"; then
+    export PATH="${CLI_DEST}/bin:$PATH"
+    # Persist PATH addition
+    local SHELL_RC=""
+    if [ -f "$HOME/.bashrc" ]; then SHELL_RC="$HOME/.bashrc"
+    elif [ -f "$HOME/.zshrc" ]; then SHELL_RC="$HOME/.zshrc"
+    elif [ -f "$HOME/.profile" ]; then SHELL_RC="$HOME/.profile"
+    fi
+    if [ -n "$SHELL_RC" ]; then
+      if ! grep -q "codex-orchestrator/bin" "$SHELL_RC" 2>/dev/null; then
+        echo 'export PATH="$HOME/.codex-orchestrator/bin:$PATH"' >> "$SHELL_RC"
+        info "Added codex-agent to PATH in $(basename "$SHELL_RC")"
+      fi
+    fi
+  fi
+
+  if command -v codex-agent &>/dev/null; then
+    success "codex-agent CLI: $(codex-agent --version 2>/dev/null || echo 'installed')"
+  else
+    warn "codex-agent installed but may need shell restart to appear on PATH"
+  fi
+}
+
 install_skills() {
   info "Installing skills to ${CLAUDE_DIR}/skills/"
   for skill_dir in "${PLUGIN_DIR}/skills"/*/; do
@@ -203,6 +256,15 @@ verify() {
     all_ok=0
   fi
 
+  if command -v codex-agent &>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} codex-agent CLI"
+  elif [[ -f "${HOME}/.codex-orchestrator/bin/codex-agent" ]]; then
+    echo -e "  ${YELLOW}~${NC} codex-agent CLI (installed but not on PATH — restart shell)"
+  else
+    echo -e "  ${RED}✗${NC} codex-agent CLI — missing"
+    all_ok=0
+  fi
+
   echo ""
   if [[ "$all_ok" -eq 1 ]]; then
     success "All skills and scripts installed."
@@ -239,6 +301,9 @@ main() {
   check_bun
   check_sqlite
   check_codex
+
+  echo ""
+  install_cli
 
   echo ""
   install_skills

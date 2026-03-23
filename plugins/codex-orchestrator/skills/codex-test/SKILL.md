@@ -177,7 +177,8 @@ fi
 
 7. Spawn, then immediately mark `running`:
 ```bash
-codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$TEST_MODEL" -r "$TEST_REASONING"
+codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$TEST_MODEL" -r "$TEST_REASONING" \
+  --on-complete "bash _codex/on-complete-{agentId}.sh"
 sqlite3 _codex/state.db <<SQL
 UPDATE agents SET status='running' WHERE id='{jobId}';
 INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Test agent {jobId} spawn command issued.');
@@ -276,7 +277,8 @@ sqlite3 _codex/state.db "DELETE FROM file_locks WHERE agent_id='{jobId}';"
 ```bash
 TEST_MODEL="${CODEX_TEST_MODEL:-gpt-5.3-codex}"
 TEST_REASONING="${CODEX_TEST_REASONING:-high}"
-codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$TEST_MODEL" -r "$TEST_REASONING"
+codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$TEST_MODEL" -r "$TEST_REASONING" \
+  --on-complete "bash _codex/on-complete-{id}.sh"
 ```
 
 ### Timing

@@ -163,7 +163,8 @@ FAIL
 
 6. Spawn, then immediately mark `running`:
 ```bash
-codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING"
+codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING" \
+  --on-complete "bash _codex/on-complete-{agentId}.sh"
 sqlite3 _codex/state.db <<SQL
 UPDATE agents SET status='running' WHERE id='{jobId}';
 INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Research agent {jobId} spawn command issued.');
@@ -220,7 +221,8 @@ sqlite3 _codex/state.db "INSERT INTO events (type, source, message) VALUES ('age
 ```bash
 RESEARCH_MODEL="${CODEX_RESEARCH_MODEL:-gpt-5.4}"
 RESEARCH_REASONING="${CODEX_RESEARCH_REASONING:-high}"
-codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING"
+codex-agent start "$(cat _codex/prompt-{id}.txt)" -m "$RESEARCH_MODEL" -r "$RESEARCH_REASONING" \
+  --on-complete "bash _codex/on-complete-{id}.sh"
 ```
 
 Claude subagent path (default) uses no Codex model — subagents inherit Claude's model.

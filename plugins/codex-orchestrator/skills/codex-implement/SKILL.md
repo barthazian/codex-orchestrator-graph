@@ -176,11 +176,31 @@ fi
 
 If the check fails: move the TASK body content to `_codex/specs/{agentId}.md`, replace with `IMPLEMENTATION SPEC: Read _codex/specs/{agentId}.md`, re-run the check, then spawn.
 
+**Write per-agent on-complete callback script** (before spawning):
+
+```bash
+cat > "_codex/on-complete-{agentId}.sh" << 'SCRIPT'
+#!/bin/bash
+sqlite3 _codex/state.db <<SQL
+UPDATE agents SET status='completed', completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+  summary='Completed via on-complete callback. Job: $CODEX_JOB_ID',
+  files_modified='$CODEX_JOB_FILES'
+WHERE id='{agentId}' AND status='running';
+INSERT INTO events (type, source, message) VALUES ('agent_complete','agent-{agentId}','Completed via on-complete. Job: $CODEX_JOB_ID');
+DELETE FROM file_locks WHERE agent_id='{agentId}';
+SQL
+SCRIPT
+chmod +x "_codex/on-complete-{agentId}.sh"
+```
+
 **Spawning command** (after size check passes):
 
 ```bash
-codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$IMPL_MODEL" -r "$IMPL_REASONING"
+codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$IMPL_MODEL" -r "$IMPL_REASONING" \
+  --on-complete "bash _codex/on-complete-{agentId}.sh"
 ```
+
+The `--on-complete` callback runs **outside the agent sandbox** after `refreshJobStatus()` detects completion via JSONL events. It updates state.db with the correct agent ID and releases file locks. Env vars available: `$CODEX_JOB_ID`, `$CODEX_JOB_STATUS`, `$CODEX_JOB_FILES`, `$CODEX_JOB_ERROR`.
 
 ### After Spawning
 
