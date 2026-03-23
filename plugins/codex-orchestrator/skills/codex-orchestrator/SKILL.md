@@ -263,7 +263,7 @@ CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   task TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'spawned', 'running', 'completed', 'failed')),
+    CHECK (status IN ('pending', 'running', 'completed', 'failed')),
   sandbox TEXT DEFAULT 'workspace-write',
   started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
   completed_at TEXT,
@@ -529,7 +529,7 @@ codex-agent mission reconcile --dir "{cwd}"
 
 # 4. Re-spawn background watcher if any agents are still running
 STILL_RUNNING=$(sqlite3 _codex/state.db \
-  "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
+  "SELECT COUNT(*) FROM agents WHERE status IN ('pending','running');")
 # If STILL_RUNNING > 0, re-spawn the background watcher (Bash tool, run_in_background: true)
 ```
 

@@ -175,11 +175,11 @@ if [ "$PROMPT_BYTES" -gt 3000 ]; then
 fi
 ```
 
-7. Spawn, then immediately mark `spawned`:
+7. Spawn, then immediately mark `running`:
 ```bash
 codex-agent start "$(cat _codex/prompt-{agentId}.txt)" -m "$TEST_MODEL" -r "$TEST_REASONING"
 sqlite3 _codex/state.db <<SQL
-UPDATE agents SET status='spawned' WHERE id='{jobId}';
+UPDATE agents SET status='running' WHERE id='{jobId}';
 INSERT INTO events (type, source, message) VALUES ('agent_spawned', 'claude', 'Test agent {jobId} spawn command issued.');
 SQL
 ```
@@ -191,7 +191,7 @@ After spawning all test agents:
 # Bash tool, run_in_background: true
 while true; do
   PENDING=$(sqlite3 _codex/state.db \
-    "SELECT COUNT(*) FROM agents WHERE status IN ('pending','spawned','running');")
+    "SELECT COUNT(*) FROM agents WHERE status IN ('pending','running');")
   [ "$PENDING" -eq 0 ] && break
   sleep 15
 done
