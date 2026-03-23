@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // codex-review.mjs — WebSocket client for codex app-server review API
-import { execFileSync, spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+// Robust Windows process-tree cleanup via PID file + taskkill /T /F
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
 import { createServer } from "node:net";
+import { join } from "node:path";
 
 // --- CLI args ---
 const args = process.argv.slice(2);
@@ -10,7 +12,7 @@ const flag = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 
 const target = flag("--target");
 const cwd = flag("--cwd") || process.cwd();
 const output = flag("--output");
-const timeout = Number(flag("--timeout") || 120000);
+const timeout = Number(flag("--timeout") || 0);  // 0 = no timeout (cleanup via PID kill is sufficient)
 
 if (!target || !output) {
   process.stderr.write("Usage: node codex-review.mjs --target <type> --cwd <path> --output <path> [--timeout <ms>]\n");
@@ -33,6 +35,37 @@ if (!WS) {
   catch { process.stderr.write("No WebSocket available (need Node 22+ or ws package)\n"); process.exit(1); }
 }
 
+// --- PID file for process-tree cleanup ---
+const pidFile = join(cwd, "_codex", "codex-review-server.pid");
+
+function cleanupPidFile() {
+  try { if (existsSync(pidFile)) unlinkSync(pidFile); } catch { /* best-effort */ }
+}
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (isWindows) {
+    // taskkill /T /F kills entire process tree on Windows (cmd.exe → codex.exe → app-server)
+    spawnSync("taskkill", ["/T", "/F", "/PID", String(pid)], { stdio: "ignore" });
+  } else {
+    // Unix: kill process group
+    try { process.kill(-pid, "SIGKILL"); } catch { /* already dead */ }
+    try { process.kill(pid, "SIGKILL"); } catch { /* already dead */ }
+  }
+}
+
+// Pre-cleanup: kill any orphaned app-server from previous runs
+if (existsSync(pidFile)) {
+  try {
+    const stalePid = Number(readFileSync(pidFile, "utf8").trim());
+    if (stalePid > 0) {
+      process.stderr.write(`Cleaning up stale app-server PID ${stalePid}\n`);
+      killProcessTree(stalePid);
+    }
+  } catch { /* stale PID file — remove it */ }
+  cleanupPidFile();
+}
+
 // --- Find free port ---
 const port = await new Promise((resolve, reject) => {
   const srv = createServer();
@@ -41,15 +74,61 @@ const port = await new Promise((resolve, reject) => {
 });
 
 // --- Spawn app-server ---
+// Windows: shell: true required for .cmd files. Orphan prevention via taskkill /T /F on PID.
+// Unix: no shell needed; detached for process group kill.
 const wsUrl = `ws://127.0.0.1:${port}`;
-const server = spawn("codex", ["app-server", "--listen", wsUrl], { cwd, stdio: "ignore", shell: isWindows });
+const server = spawn("codex", ["app-server", "--listen", wsUrl], {
+  cwd,
+  stdio: ["ignore", "ignore", "pipe"],  // capture stderr for debugging
+  shell: isWindows,
+  detached: !isWindows,
+});
+
+// Write PID file for cleanup
+if (server.pid) {
+  writeFileSync(pidFile, String(server.pid), "utf8");
+}
+
+// Capture stderr for diagnostics
+let serverStderr = "";
+if (server.stderr) {
+  server.stderr.on("data", (chunk) => {
+    serverStderr += chunk.toString();
+    if (serverStderr.length > 4000) serverStderr = serverStderr.slice(-2000);
+  });
+}
+
 let killed = false;
-const cleanup = () => { if (!killed) { killed = true; server.kill(); } };
+const cleanup = () => {
+  if (killed) return;
+  killed = true;
+  // Step 1: graceful SIGTERM
+  try { server.kill("SIGTERM"); } catch { /* already dead */ }
+  // Step 2: force-kill entire process tree after 3 seconds
+  setTimeout(() => {
+    if (server.pid) killProcessTree(server.pid);
+    cleanupPidFile();
+  }, 3000);
+  // Immediate: also try tree kill (belt + suspenders)
+  if (server.pid) killProcessTree(server.pid);
+  cleanupPidFile();
+};
+
+// Hook ALL exit paths — not just "exit"
 process.on("exit", cleanup);
+process.on("SIGTERM", () => { cleanup(); process.exit(1); });
+process.on("SIGINT", () => { cleanup(); process.exit(1); });
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`Uncaught exception: ${err.message}\n`);
+  cleanup();
+  process.exit(1);
+});
 
 server.on("exit", (code) => {
   if (!killed) {
     process.stderr.write(`codex app-server exited unexpectedly (code ${code})\n`);
+    if (serverStderr) process.stderr.write(`Server stderr: ${serverStderr.slice(-500)}\n`);
+    cleanupPidFile();
     process.exit(1);
   }
 });
@@ -62,10 +141,10 @@ const connect = () => new Promise((resolve, reject) => {
     const sock = new WS(wsUrl);
     let settled = false;
     sock.onopen = () => { settled = true; resolve(sock); };
-    sock.onerror = (err) => {
+    sock.onerror = () => {
       if (settled) return;
       settled = true;
-      try { sock.close(); } catch (closeErr) { /* retry handles this — close can re-fire onerror */ }
+      try { sock.close(); } catch { /* retry handles this */ }
       setTimeout(attempt, 500);
     };
   };
@@ -93,12 +172,13 @@ const send = (method, params) => {
   ws.send(msg);
 };
 
-// --- Timeout guard ---
-const timer = setTimeout(() => {
+// --- Timeout guard (only if --timeout was explicitly passed, otherwise no limit) ---
+const timer = timeout > 0 ? setTimeout(() => {
   process.stderr.write("review timed out\n");
+  if (serverStderr) process.stderr.write(`Server stderr at timeout: ${serverStderr.slice(-500)}\n`);
   cleanup();
-  process.exit(1);
-}, timeout);
+  setTimeout(() => process.exit(1), 4000);
+}, timeout) : null;
 
 // --- Protocol ---
 let threadId;
@@ -137,9 +217,10 @@ ws.onmessage = (ev) => {
     phase = "done";
     clearTimeout(timer);
     writeFileSync(output, msg.params.item.review ?? "", "utf8");
-    ws.close?.();
+    try { ws.close(); } catch { /* best effort */ }
     cleanup();
-    process.exit(0);
+    // Wait for cleanup to finish then exit
+    setTimeout(() => process.exit(0), 1000);
   }
 };
 
@@ -147,10 +228,10 @@ ws.onerror = (err) => {
   process.stderr.write(`WebSocket error: ${err.message || err}\n`);
   clearTimeout(timer);
   cleanup();
-  process.exit(1);
+  setTimeout(() => process.exit(1), 1000);
 };
 
 // --- Start: send initialize handshake ---
 send("initialize", {
-  clientInfo: { name: "codex-review-mjs", title: "Codex Review Script", version: "1.0.0" }
+  clientInfo: { name: "codex-review-mjs", title: "Codex Review Script", version: "1.0.1" }
 });
